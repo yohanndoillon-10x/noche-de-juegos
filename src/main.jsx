@@ -269,6 +269,63 @@ function DrawingCanvas({ isDrawer, party }) {
   );
 }
 
+function RulesCard({ onClose }) {
+  return (
+    <div className="card gap-12 animate-in" style={{ border: "1px solid rgba(233,69,96,0.2)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2 style={{ textAlign: "left", fontSize: "1.1rem", margin: 0 }}>Reglas del Juego</h2>
+        {onClose && <button className="back-btn" style={{ padding: 0, fontSize: "1.2rem" }} onClick={onClose}>×</button>}
+      </div>
+
+      <div className="gap-8">
+        <div>
+          <p style={{ fontWeight: 600, color: "var(--accent-soft)", fontSize: "0.9rem" }}>🎨 Dibujar</p>
+          <p style={{ fontSize: "0.82rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+            Uno dibuja, el otro adivina. Tienes 90 segundos. Si adivinan: +10 pts para quien adivina, +5 pts para quien dibuja. Puedes saltar palabras.
+          </p>
+        </div>
+        <div>
+          <p style={{ fontWeight: 600, color: "var(--accent-soft)", fontSize: "0.9rem" }}>🤔😈 Verdad o Reto</p>
+          <p style={{ fontSize: "0.82rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+            Por turnos, elige verdad o reto. Las preguntas y retos dependen del nivel de picante. Completar da +5 pts.
+          </p>
+        </div>
+        <div>
+          <p style={{ fontWeight: 600, color: "var(--accent-soft)", fontSize: "0.9rem" }}>⚡ Penitencias</p>
+          <p style={{ fontSize: "0.82rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+            Cada 3 rondas, quien va perdiendo recibe una penitencia. La intensidad depende del nivel de picante elegido.
+          </p>
+        </div>
+        <div>
+          <p style={{ fontWeight: 600, color: "var(--accent-soft)", fontSize: "0.9rem" }}>📝 Palabras Secretas</p>
+          <p style={{ fontSize: "0.82rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+            Cada uno agrega hasta 10 palabras secretas. Tu pareja las dibujará sin saber qué son. Pueden ser apodos, bromas internas, lugares, memorias...
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RulesButton() {
+  const [open, setOpen] = useState(false);
+  return (<>
+    <button onClick={() => setOpen(true)} style={{
+      position: "fixed", bottom: "16px", right: "16px", zIndex: 50,
+      width: "44px", height: "44px", borderRadius: "50%", border: "1px solid rgba(255,255,255,0.1)",
+      background: "var(--bg-card)", color: "var(--text-dim)", fontSize: "1.2rem",
+      cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+    }}>?</button>
+    {open && (
+      <div className="celebration" onClick={() => setOpen(false)}>
+        <div style={{ maxWidth: "440px", width: "90%", padding: "16px" }} onClick={e => e.stopPropagation()}>
+          <RulesCard onClose={() => setOpen(false)} />
+        </div>
+      </div>
+    )}
+  </>);
+}
+
 function LandingScreen() {
   const g = useGame();
   return (
@@ -279,6 +336,7 @@ function LandingScreen() {
         <h1 style={{ color: "var(--accent)" }}>en Pareja</h1>
         <p className="subtitle mt-8">Dibuja, reta, y diviértanse juntos</p>
       </div>
+      <RulesCard />
       <div className="gap-12">
         <button className="btn btn-primary" onClick={() => { g.setIsHost(true); g.setPhase("create"); }}>Crear Sala</button>
         <button className="btn btn-secondary" onClick={() => g.setPhase("join")}>Unirse a Sala</button>
@@ -836,6 +894,7 @@ function App() {
       {phase === "truthordare" && <TruthOrDareScreen />}
       {phase === "forfeit" && <ForfeitScreen />}
       {phase === "results" && <ResultsScreen />}
+      {phase !== "landing" && <RulesButton />}
       <CelebrationOverlay />
     </GameCtx.Provider>
   );
