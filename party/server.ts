@@ -4,7 +4,7 @@ type WordEntry = { word: string; category: string };
 type PlayerInfo = { name: string; playerId: string; isHost: boolean; connId: string };
 
 export default class GameServer implements Server {
-  options = { hibernate: true };
+  options = { hibernate: false };
 
   wordLists: Record<string, WordEntry[]> = {};
   players: PlayerInfo[] = [];

@@ -281,7 +281,7 @@ function RulesCard({ onClose }) {
         <div>
           <p style={{ fontWeight: 600, color: "var(--accent-soft)", fontSize: "0.9rem" }}>🎨 Dibujar</p>
           <p style={{ fontSize: "0.82rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
-            Uno dibuja, el otro adivina. Tienes 90 segundos. Si adivinan: +10 pts para quien adivina, +5 pts para quien dibuja. Puedes saltar palabras.
+            Uno dibuja, el otro adivina. Tienes 60 segundos. Si adivinan: +10 pts para quien adivina, +5 pts para quien dibuja. Puedes saltar palabras.
           </p>
         </div>
         <div>
@@ -464,8 +464,9 @@ function WordsScreen() {
     g.party.send({ type: "submit-words", playerId: g.playerId, words: localWords.length > 0 ? localWords : DEFAULT_WORDS });
   }
   function startGame() {
+    // Pattern: draw, draw, truthordare, truthordare — so both players draw and both get truth/dare
     const order = [];
-    for (let i = 0; i < 12; i++) order.push(i % 2 === 0 ? "drawing" : "truthordare");
+    for (let i = 0; i < 4; i++) order.push("drawing", "drawing", "truthordare", "truthordare");
     g.party.send({ type: "start-game", gameOrder: order });
     g.setGameOrder(order); g.setGameIndex(0); g.setRound(1); g.setTurnPlayer(1);
     g.setScores({ p1: 0, p2: 0 }); g.setPhase(order[0]);
@@ -531,7 +532,7 @@ function DrawingScreen() {
       g.party.send({ type: "request-word", requesterId: g.playerId, wordIndex: g.wordIndexCounter });
       g.setWordIndexCounter(prev => prev + 1);
     }
-    g.setTimeLeft(90); g.setDrawingFinished(false); g.setGuesses([]);
+    g.setTimeLeft(60); g.setDrawingFinished(false); g.setGuesses([]);
     return () => { requestedWord.current = false; };
   }, [g.round, g.turnPlayer]);
 
@@ -792,7 +793,7 @@ function App() {
   const [wordIndexCounter, setWordIndexCounter] = useState(0);
   const [currentWord, setCurrentWord] = useState(null);
   const [currentCategory, setCurrentCategory] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(90);
+  const [timeLeft, setTimeLeft] = useState(60);
   const [guesses, setGuesses] = useState([]);
   const [drawingFinished, setDrawingFinished] = useState(false);
   const [todChoice, setTodChoice] = useState(null);
@@ -832,7 +833,7 @@ function App() {
         setTimeout(() => setCelebration(null), 2500);
       }),
       party.on("time-up", (d) => { setDrawingFinished(true); if (d && d.word) setCurrentWord(d.word); setCelebration({ type: "timeup" }); setTimeout(() => setCelebration(null), 2500); }),
-      party.on("next-round", (d) => { setRound(d.round); setTurnPlayer(d.turnPlayer); setGameIndex(d.gameIndex !== undefined ? d.gameIndex : 0); if (d.scores) setScores(d.scores); setPhase(d.game === "forfeit" ? "forfeit" : d.game); setDrawingFinished(false); setGuesses([]); setCurrentWord(null); setCurrentCategory(null); setTimeLeft(90); setTodChoice(null); setTodCard(null); setTodRevealed(false); }),
+      party.on("next-round", (d) => { setRound(d.round); setTurnPlayer(d.turnPlayer); setGameIndex(d.gameIndex !== undefined ? d.gameIndex : 0); if (d.scores) setScores(d.scores); setPhase(d.game === "forfeit" ? "forfeit" : d.game); setDrawingFinished(false); setGuesses([]); setCurrentWord(null); setCurrentCategory(null); setTimeLeft(60); setTodChoice(null); setTodCard(null); setTodRevealed(false); }),
       party.on("tod-choice", (d) => setTodChoice(d.choice)),
       party.on("tod-card", (d) => { setTodCard(d.card); setTodRevealed(true); }),
       party.on("skip-word", () => { setCurrentWord(null); setCurrentCategory(null); setGuesses([]); }),
