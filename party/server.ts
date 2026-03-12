@@ -7,6 +7,8 @@ export default class GameServer implements Server {
   options = { hibernate: false };
 
   wordLists: Record<string, WordEntry[]> = {};
+  usedWords: Record<string, Set<number>> = {}; // tracks used indices per player
+  globalUsedWords: Set<string> = new Set(); // tracks all drawn words globally to avoid cross-player repeats
   players: PlayerInfo[] = [];
   currentWord: string | null = null;
 
@@ -63,21 +65,46 @@ export default class GameServer implements Server {
       return;
     }
 
-    // Request word for drawing round — send opponent's word to requester
+    // Request word for drawing round — send opponent's unused word to requester
     if (data.type === "request-word") {
       const allPlayerIds = Object.keys(this.wordLists);
-      const opponentWords =
-        allPlayerIds.length === 2
-          ? this.wordLists[
-              allPlayerIds.find((id) => id !== data.requesterId) ||
-                allPlayerIds[0]
-            ] || []
-          : [];
-      const wordIndex = data.wordIndex % Math.max(opponentWords.length, 1);
-      const word =
-        opponentWords.length > 0
-          ? opponentWords[wordIndex]
-          : { word: "corazón", category: "default" };
+      const opponentId = allPlayerIds.length === 2
+        ? allPlayerIds.find((id) => id !== data.requesterId) || allPlayerIds[0]
+        : null;
+      const opponentWords = opponentId ? this.wordLists[opponentId] || [] : [];
+      const usedKey = data.requesterId; // track what this drawer has already drawn
+      if (!this.usedWords[usedKey]) this.usedWords[usedKey] = new Set();
+
+      // Find an unused word (not used by this drawer AND not drawn globally yet)
+      let word: WordEntry | null = null;
+      for (let i = 0; i < opponentWords.length; i++) {
+        if (!this.usedWords[usedKey].has(i) && !this.globalUsedWords.has(opponentWords[i].word.toLowerCase())) {
+          word = opponentWords[i];
+          this.usedWords[usedKey].add(i);
+          this.globalUsedWords.add(word.word.toLowerCase());
+          break;
+        }
+      }
+      // If all globally unused are exhausted, fall back to per-player unused only
+      if (!word) {
+        for (let i = 0; i < opponentWords.length; i++) {
+          if (!this.usedWords[usedKey].has(i)) {
+            word = opponentWords[i];
+            this.usedWords[usedKey].add(i);
+            this.globalUsedWords.add(word.word.toLowerCase());
+            break;
+          }
+        }
+      }
+      // If truly all exhausted, reset this player's tracking and pick randomly
+      if (!word && opponentWords.length > 0) {
+        this.usedWords[usedKey] = new Set();
+        const idx = Math.floor(Math.random() * opponentWords.length);
+        word = opponentWords[idx];
+        this.usedWords[usedKey].add(idx);
+      }
+      if (!word) word = { word: "corazón", category: "default" };
+
       this.currentWord = word.word;
       sender.send(JSON.stringify({ type: "word-to-draw", ...word }));
       return;

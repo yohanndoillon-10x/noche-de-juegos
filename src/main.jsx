@@ -645,11 +645,17 @@ function TruthOrDareScreen() {
     g.setTodChoice(choice); g.party.send({ type: "tod-choice", choice });
     const deck = choice === "truth" ? TRUTHS[g.spiceLevel] : DARES[g.spiceLevel];
     const used = choice === "truth" ? g.usedTruths : g.usedDares;
-    const available = deck.filter(c => !used.includes(c));
-    const card = available.length > 0 ? pickRandom(available) : pickRandom(deck);
+    let available = deck.filter(c => !used.includes(c));
+    // If all exhausted, reset tracking so they can cycle again
+    if (available.length === 0) {
+      if (choice === "truth") g.setUsedTruths([]);
+      else g.setUsedDares([]);
+      available = deck;
+    }
+    const card = pickRandom(available);
     if (choice === "truth") g.setUsedTruths(prev => [...prev, card]);
     else g.setUsedDares(prev => [...prev, card]);
-    g.setTodCard(card); g.setTodRevealed(true); g.party.send({ type: "tod-card", card });
+    g.setTodCard(card); g.setTodRevealed(true); g.party.send({ type: "tod-card", card, choice });
   }
 
   function handleDone() {
@@ -835,7 +841,12 @@ function App() {
       party.on("time-up", (d) => { setDrawingFinished(true); if (d && d.word) setCurrentWord(d.word); setCelebration({ type: "timeup" }); setTimeout(() => setCelebration(null), 2500); }),
       party.on("next-round", (d) => { setRound(d.round); setTurnPlayer(d.turnPlayer); setGameIndex(d.gameIndex !== undefined ? d.gameIndex : 0); if (d.scores) setScores(d.scores); setPhase(d.game === "forfeit" ? "forfeit" : d.game); setDrawingFinished(false); setGuesses([]); setCurrentWord(null); setCurrentCategory(null); setTimeLeft(60); setTodChoice(null); setTodCard(null); setTodRevealed(false); }),
       party.on("tod-choice", (d) => setTodChoice(d.choice)),
-      party.on("tod-card", (d) => { setTodCard(d.card); setTodRevealed(true); }),
+      party.on("tod-card", (d) => {
+        setTodCard(d.card); setTodRevealed(true);
+        // Track the card as used so it won't repeat when it's our turn
+        if (d.choice === "truth") setUsedTruths(prev => prev.includes(d.card) ? prev : [...prev, d.card]);
+        else if (d.choice === "dare") setUsedDares(prev => prev.includes(d.card) ? prev : [...prev, d.card]);
+      }),
       party.on("skip-word", () => { setCurrentWord(null); setCurrentCategory(null); setGuesses([]); }),
       party.on("tod-done", (d) => setScores(d.scores)),
       party.on("game-over", (d) => { setScores(d.scores); setPhase("results"); }),
