@@ -237,12 +237,15 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <script type="text/babel" data-type="module">
-    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+    const { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } = React;
 
     // ===== CONFIG =====
     const PARTYKIT_HOST = window.location.hostname === "localhost"
       ? "localhost:1999"
       : "noche-de-juegos.yohanndoillon-10x.partykit.dev";
+
+    const GameCtx = createContext(null);
+    function useGame() { return useContext(GameCtx); }
 
     const CATEGORIES = [
       { id: "apodos", label: "Apodos", icon: "\u{1F495}" },
@@ -426,6 +429,581 @@
       return { connected, playerCount, send, on };
     }
 
+    // ===== COMPONENTS (defined outside App for stable references) =====
+
+    function DrawingCanvas({ isDrawer, party }) {
+      const canvasRef = useRef(null);
+      const [isDrawing, setIsDrawing] = useState(false);
+      const [color, setColor] = useState("#000000");
+      const [brushSize, setBrushSize] = useState(6);
+      const lastPoint = useRef(null);
+      const dims = useRef({ w: 0, h: 0 });
+
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const w = canvas.offsetWidth;
+        const h = Math.round(w * 1.1);
+        canvas.width = w * 2;
+        canvas.height = h * 2;
+        canvas.style.height = h + "px";
+        dims.current = { w, h };
+        const ctx = canvas.getContext("2d");
+        ctx.scale(2, 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+      }, []);
+
+      useEffect(() => {
+        if (isDrawer) return;
+        const c1 = party.on("draw-stroke", (d) => {
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const ctx = canvas.getContext("2d");
+          ctx.strokeStyle = d.color;
+          ctx.lineWidth = d.size;
+          ctx.beginPath();
+          ctx.moveTo(d.x1, d.y1);
+          ctx.lineTo(d.x2, d.y2);
+          ctx.stroke();
+        });
+        const c2 = party.on("draw-clear", () => {
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, dims.current.w, dims.current.h);
+        });
+        return () => { c1(); c2(); };
+      }, [isDrawer]);
+
+      function getPos(e) {
+        const rect = canvasRef.current.getBoundingClientRect();
+        const t = e.touches ? e.touches[0] : e;
+        return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+      }
+      function startDraw(e) {
+        if (!isDrawer) return;
+        e.preventDefault();
+        setIsDrawing(true);
+        lastPoint.current = getPos(e);
+      }
+      function draw(e) {
+        if (!isDrawing || !isDrawer) return;
+        e.preventDefault();
+        const pos = getPos(e);
+        const ctx = canvasRef.current.getContext("2d");
+        ctx.strokeStyle = color;
+        ctx.lineWidth = brushSize;
+        ctx.beginPath();
+        ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.stroke();
+        party.send({ type: "draw-stroke", x1: lastPoint.current.x, y1: lastPoint.current.y, x2: pos.x, y2: pos.y, color, size: brushSize });
+        lastPoint.current = pos;
+      }
+      function endDraw() { setIsDrawing(false); lastPoint.current = null; }
+      function clearCanvas() {
+        const ctx = canvasRef.current.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, dims.current.w, dims.current.h);
+        party.send({ type: "draw-clear" });
+      }
+
+      return (
+        <div>
+          <div className="canvas-container">
+            <canvas ref={canvasRef} style={{ width: "100%", cursor: isDrawer ? "crosshair" : "default" }}
+              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw} />
+          </div>
+          {isDrawer && (
+            <React.Fragment>
+              <div className="color-picker mt-8">
+                {DRAW_COLORS.map(c => (
+                  <div key={c} className={"color-dot " + (color === c ? "active" : "")}
+                    style={{ background: c, border: c === "#ffffff" ? "2px solid #ccc" : undefined }}
+                    onClick={() => setColor(c)} />
+                ))}
+              </div>
+              <div className="brush-sizes mt-8">
+                {BRUSH_SIZES.map(s => (
+                  <div key={s} className={"brush-size " + (brushSize === s ? "active" : "")}
+                    style={{ width: s + 10, height: s + 10 }} onClick={() => setBrushSize(s)} />
+                ))}
+                <button className="btn btn-secondary" style={{ width: "auto", padding: "8px 16px", fontSize: "0.8rem", marginLeft: "8px" }}
+                  onClick={clearCanvas}>Borrar</button>
+              </div>
+            </React.Fragment>
+          )}
+        </div>
+      );
+    }
+
+    function LandingScreen() {
+      const g = useGame();
+      return (
+        <div className="gap-24 animate-in" style={{ justifyContent: "center", flex: 1 }}>
+          <div className="text-center">
+            <div className="animate-float" style={{ fontSize: "3.5rem", marginBottom: "12px" }}>{"\u{1F319}"}</div>
+            <h1>Noche de Juegos</h1>
+            <h1 style={{ color: "var(--accent)" }}>en Pareja</h1>
+            <p className="subtitle mt-8">Dibuja, reta, y divi\u00e9rtanse juntos</p>
+          </div>
+          <div className="gap-12">
+            <button className="btn btn-primary" onClick={() => { g.setIsHost(true); g.setPhase("create"); }}>Crear Sala</button>
+            <button className="btn btn-secondary" onClick={() => g.setPhase("join")}>Unirse a Sala</button>
+          </div>
+        </div>
+      );
+    }
+
+    function CreateScreen() {
+      const g = useGame();
+      const [name, setName] = useState("");
+      function handleCreate() {
+        if (!name.trim()) return;
+        g.setMyName(name.trim());
+        g.setRoomId(generateRoomCode());
+        g.setPhase("lobby");
+      }
+      return (
+        <div className="gap-24 animate-in" style={{ flex: 1 }}>
+          <button className="back-btn" onClick={() => g.setPhase("landing")}>{"\u2190"} Volver</button>
+          <div><h2>Crear Sala</h2><p className="subtitle">Ingresa tu nombre para empezar</p></div>
+          <div className="gap-12">
+            <input className="input" placeholder="Tu nombre" value={name} onChange={e => setName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleCreate()} autoFocus />
+            <button className={"btn btn-primary " + (!name.trim() ? "btn-disabled" : "")} onClick={handleCreate}>Crear Sala</button>
+          </div>
+        </div>
+      );
+    }
+
+    function JoinScreen() {
+      const g = useGame();
+      const [name, setName] = useState("");
+      const [code, setCode] = useState("");
+      function handleJoin() {
+        if (!name.trim() || code.length < 6) return;
+        g.setMyName(name.trim());
+        g.setRoomId(code.toUpperCase());
+        g.setPhase("lobby");
+      }
+      return (
+        <div className="gap-24 animate-in" style={{ flex: 1 }}>
+          <button className="back-btn" onClick={() => g.setPhase("landing")}>{"\u2190"} Volver</button>
+          <div><h2>Unirse a Sala</h2><p className="subtitle">Ingresa el c\u00f3digo que te compartieron</p></div>
+          <div className="gap-12">
+            <input className="input" placeholder="Tu nombre" value={name} onChange={e => setName(e.target.value)} autoFocus />
+            <input className="input" placeholder="C\u00f3digo de sala" value={code}
+              onChange={e => setCode(e.target.value.toUpperCase())}
+              onKeyDown={e => e.key === "Enter" && handleJoin()}
+              maxLength={6} style={{ textAlign: "center", letterSpacing: "8px", fontSize: "1.3rem" }} />
+            <button className={"btn btn-primary " + (!name.trim() || code.length < 6 ? "btn-disabled" : "")} onClick={handleJoin}>Unirse</button>
+          </div>
+        </div>
+      );
+    }
+
+    function LobbyScreen() {
+      const g = useGame();
+      const announced = useRef(false);
+
+      useEffect(() => {
+        if (!g.party.connected || announced.current) return;
+        announced.current = true;
+        g.party.send({ type: "announce", name: g.myName, playerId: g.playerId, isHost: g.isHost });
+      }, [g.party.connected]);
+
+      function updateSettings(spice, strip) {
+        g.setSpiceLevel(spice);
+        g.setStripMode(strip);
+        g.party.send({ type: "settings-update", spiceLevel: spice, stripMode: strip });
+      }
+
+      const bothConnected = g.party.playerCount >= 2;
+
+      return (
+        <div className="gap-16 animate-in" style={{ flex: 1 }}>
+          <div className="text-center">
+            <h2>{g.isHost ? "Sala Creada" : "Conectado"}</h2>
+            {g.isHost && <div className="room-code animate-glow">{g.roomId}</div>}
+            {g.isHost && <p className="subtitle">Comparte este c\u00f3digo con tu pareja</p>}
+          </div>
+          <div className="card gap-12">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>{"\u{1F464}"} {g.myName}</span>
+              <span style={{ color: "var(--success)", fontSize: "0.8rem" }}>Conectado/a</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>{"\u{1F495}"} {g.partnerName || "Esperando..."}</span>
+              {g.partnerName ? (
+                <span style={{ color: "var(--success)", fontSize: "0.8rem" }}>Conectado/a</span>
+              ) : (
+                <span className="waiting-dots" style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}><span>.</span><span>.</span><span>.</span></span>
+              )}
+            </div>
+          </div>
+          {g.isHost && (
+            <div className="card gap-12">
+              <h2 style={{ textAlign: "left", fontSize: "1rem" }}>Nivel de Picante</h2>
+              <div className="spice-options">
+                {[{ id: "mild", label: "\u{1F60A} Suave" }, { id: "medium", label: "\u{1F336}\u{FE0F} Medio" }, { id: "spicy", label: "\u{1F525} Picante" }].map(s => (
+                  <button key={s.id} className={"spice-btn " + (g.spiceLevel === s.id ? "active" : "")}
+                    onClick={() => updateSettings(s.id, g.stripMode)}>{s.label}</button>
+                ))}
+              </div>
+              <div className="toggle-row">
+                <span>{"\u{1F60F}"} Modo Strip Forfeit</span>
+                <button className={"toggle " + (g.stripMode ? "active" : "")} onClick={() => updateSettings(g.spiceLevel, !g.stripMode)} />
+              </div>
+            </div>
+          )}
+          {!g.isHost && (
+            <div className="card gap-8">
+              <p style={{ fontSize: "0.9rem", color: "var(--text-dim)" }}>
+                Nivel: {g.spiceLevel === "mild" ? "\u{1F60A} Suave" : g.spiceLevel === "medium" ? "\u{1F336}\u{FE0F} Medio" : "\u{1F525} Picante"}
+              </p>
+              {g.stripMode && <p style={{ fontSize: "0.9rem", color: "var(--accent-soft)" }}>{"\u{1F60F}"} Modo Strip activado</p>}
+            </div>
+          )}
+          <button className={"btn btn-primary " + (!bothConnected ? "btn-disabled" : "")} onClick={() => g.setPhase("words")}>
+            {bothConnected ? "Agregar Palabras Secretas \u2192" : "Esperando a tu pareja..."}
+          </button>
+        </div>
+      );
+    }
+
+    function WordsScreen() {
+      const g = useGame();
+      const [activeCategory, setActiveCategory] = useState(CATEGORIES[0].id);
+      const [wordInput, setWordInput] = useState("");
+      const [localWords, setLocalWords] = useState([]);
+
+      function addWord() {
+        if (!wordInput.trim() || localWords.length >= 10) return;
+        setLocalWords(prev => [...prev, { word: wordInput.trim(), category: activeCategory }]);
+        setWordInput("");
+      }
+      function removeWord(i) { setLocalWords(prev => prev.filter((_, idx) => idx !== i)); }
+      function submitWords() {
+        g.party.send({ type: "submit-words", playerId: g.playerId, words: localWords.length > 0 ? localWords : DEFAULT_WORDS });
+      }
+      function startGame() {
+        const order = [];
+        for (let i = 0; i < 12; i++) order.push(i % 2 === 0 ? "drawing" : "truthordare");
+        g.party.send({ type: "start-game", gameOrder: order });
+        g.setGameOrder(order); g.setGameIndex(0); g.setRound(1); g.setTurnPlayer(1);
+        g.setScores({ p1: 0, p2: 0 }); g.setPhase(order[0]);
+      }
+      const ph = { apodos: "Ej: Osito, Mi vida...", bromas: "Ej: Lo del supermercado...", lugares: "Ej: Aquel caf\u00e9...", memorias: "Ej: Nuestra primera cita...", secretos: "Ej: Aquello que pas\u00f3..." };
+
+      return (
+        <div className="gap-16 animate-in" style={{ flex: 1 }}>
+          <div>
+            <h2>Tus Palabras Secretas</h2>
+            <p className="subtitle">Tu pareja las dibujar\u00e1 sin saber qu\u00e9 son {"\u{1F60F}"}</p>
+            <p className="text-center" style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>{localWords.length}/10 palabras</p>
+          </div>
+          <div className="category-tabs">
+            {CATEGORIES.map(c => {
+              const count = localWords.filter(w => w.category === c.id).length;
+              return (<button key={c.id} className={"category-tab " + (activeCategory === c.id ? "active" : "")}
+                onClick={() => setActiveCategory(c.id)}>{c.icon} {c.label} {count > 0 && "(" + count + ")"}</button>);
+            })}
+          </div>
+          {localWords.length < 10 && (
+            <div className="guess-bar">
+              <input className="input" placeholder={ph[activeCategory]} value={wordInput}
+                onChange={e => setWordInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addWord()} />
+              <button className="btn btn-primary" style={{ width: "auto" }} onClick={addWord}>+</button>
+            </div>
+          )}
+          <div className="word-chips">
+            {localWords.map((w, i) => {
+              const cat = CATEGORIES.find(c => c.id === w.category);
+              return (<span key={i} className="word-chip">{cat ? cat.icon : ""} {w.word}<button onClick={() => removeWord(i)}>{"\u00d7"}</button></span>);
+            })}
+          </div>
+          {!g.myWordsSubmitted ? (
+            <button className="btn btn-primary" onClick={submitWords}>
+              {localWords.length > 0 ? "Enviar Mis Palabras (" + localWords.length + ")" : "Usar Palabras Por Defecto"}
+            </button>
+          ) : (
+            <div className="card text-center gap-8">
+              <p style={{ color: "var(--success)" }}>{"\u2713"} Tus palabras est\u00e1n listas</p>
+              <p style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
+                {g.partnerWordsReady ? "\u2713 Tu pareja tambi\u00e9n est\u00e1 lista" : "Esperando a que tu pareja termine..."}
+              </p>
+            </div>
+          )}
+          {g.isHost && g.myWordsSubmitted && g.partnerWordsReady && (
+            <button className="btn btn-primary animate-pulse mt-8" onClick={startGame}>{"\u{1F319}"} Empezar la Noche</button>
+          )}
+        </div>
+      );
+    }
+
+    function DrawingScreen() {
+      const g = useGame();
+      const [guessInput, setGuessInput] = useState("");
+      const timerRef = useRef(null);
+      const requestedWord = useRef(false);
+      const isDrawer = g.amITurnPlayer;
+
+      useEffect(() => {
+        if (isDrawer && !requestedWord.current) {
+          requestedWord.current = true;
+          g.party.send({ type: "request-word", requesterId: g.playerId, wordIndex: g.wordIndexCounter });
+          g.setWordIndexCounter(prev => prev + 1);
+        }
+        g.setTimeLeft(90); g.setDrawingFinished(false); g.setGuesses([]);
+        return () => { requestedWord.current = false; };
+      }, [g.round, g.turnPlayer]);
+
+      useEffect(() => {
+        if (g.drawingFinished) { clearInterval(timerRef.current); return; }
+        timerRef.current = setInterval(() => {
+          g.setTimeLeft(prev => {
+            if (prev <= 1) {
+              clearInterval(timerRef.current);
+              if (g.isHost) {
+                g.party.send({ type: "time-up", word: g.currentWord });
+                g.setDrawingFinished(true);
+                g.setCelebration({ type: "timeup" });
+                setTimeout(() => g.setCelebration(null), 2500);
+              }
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+        return () => clearInterval(timerRef.current);
+      }, [g.drawingFinished, g.round, g.turnPlayer]);
+
+      function submitGuess() {
+        if (!guessInput.trim() || isDrawer || g.drawingFinished) return;
+        const guess = guessInput.trim();
+        setGuessInput("");
+        g.party.send({ type: "guess", text: guess, name: g.myName });
+        g.setGuesses(prev => [...prev, { text: guess, name: g.myName }]);
+
+        // Check correct
+        if (g.currentWord && guess.toLowerCase() === g.currentWord.toLowerCase()) {
+          const ns = { ...g.scores };
+          if (g.isHost) { ns.p2 += 10; ns.p1 += 5; } else { ns.p1 += 10; ns.p2 += 5; }
+          g.setScores(ns);
+          g.party.send({ type: "correct-guess", scores: ns, guesserName: g.myName });
+          g.setDrawingFinished(true);
+          g.setCelebration({ type: "correct", guesser: g.myName });
+          clearInterval(timerRef.current);
+          setTimeout(() => g.setCelebration(null), 2500);
+        }
+      }
+
+      const tc = g.timeLeft <= 10 ? "timer critical" : g.timeLeft <= 30 ? "timer warning" : "timer";
+      const p1 = g.isHost ? g.myName : g.partnerName;
+      const p2 = g.isHost ? g.partnerName : g.myName;
+
+      return (
+        <div className="gap-12 animate-in" style={{ flex: 1 }}>
+          <div className="score-bar">
+            <span>{p1}: <span className="score">{g.scores.p1}</span></span>
+            <span className={tc}>{g.timeLeft}s</span>
+            <span>{p2}: <span className="score">{g.scores.p2}</span></span>
+          </div>
+          {isDrawer && g.currentWord && (
+            <div className="card text-center" style={{ background: "rgba(233,69,96,0.1)", border: "1px solid var(--accent)" }}>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-dim)", marginBottom: "4px" }}>
+                {g.currentCategory && g.currentCategory !== "default" && CATEGORIES.find(c => c.id === g.currentCategory) ? CATEGORIES.find(c => c.id === g.currentCategory).icon + " " : ""}Dibuja:
+              </p>
+              <p style={{ fontSize: "1.4rem", fontWeight: "700" }}>{g.currentWord}</p>
+            </div>
+          )}
+          {!isDrawer && (
+            <div className="card text-center">
+              <p style={{ fontSize: "0.9rem", color: "var(--text-dim)" }}>
+                {g.currentCategory && g.currentCategory !== "default" && CATEGORIES.find(c => c.id === g.currentCategory)
+                  ? CATEGORIES.find(c => c.id === g.currentCategory).icon + " " + CATEGORIES.find(c => c.id === g.currentCategory).label
+                  : "\u{1F3A8} Adivina el dibujo"}
+              </p>
+            </div>
+          )}
+          <DrawingCanvas isDrawer={isDrawer} party={g.party} />
+          {!isDrawer && !g.drawingFinished && (
+            <div className="guess-bar">
+              <input className="input" placeholder="Tu respuesta..." value={guessInput}
+                onChange={e => setGuessInput(e.target.value)} onKeyDown={e => e.key === "Enter" && submitGuess()} autoFocus />
+              <button className="btn btn-primary" style={{ width: "auto" }} onClick={submitGuess}>{"\u2192"}</button>
+            </div>
+          )}
+          {g.guesses.length > 0 && (
+            <div className="card" style={{ maxHeight: "100px", overflowY: "auto" }}>
+              {g.guesses.map((q, i) => (
+                <p key={i} style={{ fontSize: "0.85rem", padding: "2px 0", color: "var(--text-dim)" }}>
+                  <strong style={{ color: "var(--text)" }}>{q.name}:</strong> {q.text}
+                </p>
+              ))}
+            </div>
+          )}
+          {g.drawingFinished && (
+            <div className="gap-8 mt-8">
+              {g.currentWord && <p className="text-center" style={{ color: "var(--accent-soft)" }}>La palabra era: <strong>{g.currentWord}</strong></p>}
+              {g.isHost ? <button className="btn btn-primary" onClick={g.advanceRound}>Siguiente Ronda {"\u2192"}</button>
+                : <p className="text-center subtitle">Esperando...</p>}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function TruthOrDareScreen() {
+      const g = useGame();
+      const isMyTurn = g.amITurnPlayer;
+      const turnName = g.turnPlayer === 1 ? (g.isHost ? g.myName : g.partnerName) : (g.isHost ? g.partnerName : g.myName);
+
+      function chooseTod(choice) {
+        g.setTodChoice(choice);
+        g.party.send({ type: "tod-choice", choice });
+        const deck = choice === "truth" ? TRUTHS[g.spiceLevel] : DARES[g.spiceLevel];
+        const used = choice === "truth" ? g.usedTruths : g.usedDares;
+        const available = deck.filter(c => !used.includes(c));
+        const card = available.length > 0 ? pickRandom(available) : pickRandom(deck);
+        if (choice === "truth") g.setUsedTruths(prev => [...prev, card]);
+        else g.setUsedDares(prev => [...prev, card]);
+        g.setTodCard(card); g.setTodRevealed(true);
+        g.party.send({ type: "tod-card", card });
+      }
+
+      function handleDone() {
+        const ns = { ...g.scores };
+        if (g.turnPlayer === 1) ns.p1 += 5; else ns.p2 += 5;
+        g.setScores(ns);
+        g.party.send({ type: "tod-done", scores: ns });
+        g.advanceRound();
+      }
+
+      const p1 = g.isHost ? g.myName : g.partnerName;
+      const p2 = g.isHost ? g.partnerName : g.myName;
+
+      return (
+        <div className="gap-16 animate-in" style={{ flex: 1 }}>
+          <div className="score-bar">
+            <span>{p1}: <span className="score">{g.scores.p1}</span></span>
+            <span style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>Ronda {g.round}</span>
+            <span>{p2}: <span className="score">{g.scores.p2}</span></span>
+          </div>
+          <h2>{turnName}</h2>
+          {!g.todChoice && (
+            <div>
+              <p className="text-center subtitle mb-16">{isMyTurn ? "\u00bfQu\u00e9 prefieres?" : "Esperando a que " + turnName + " elija..."}</p>
+              {isMyTurn && (
+                <div style={{ display: "flex", gap: "12px" }}>
+                  <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => chooseTod("truth")}>{"\u{1F914}"} Verdad</button>
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => chooseTod("dare")}>{"\u{1F608}"} Reto</button>
+                </div>
+              )}
+            </div>
+          )}
+          {g.todRevealed && g.todCard && (
+            <div className="tod-card animate-flip">
+              <p className="card-type">{g.todChoice === "truth" ? "\u{1F914} Verdad" : "\u{1F608} Reto"}</p>
+              <p className="card-text">{g.todCard}</p>
+            </div>
+          )}
+          {g.todRevealed && (
+            <div className="mt-16">
+              {g.isHost ? <button className="btn btn-primary" onClick={handleDone}>Hecho {"\u2713"} Siguiente</button>
+                : <p className="text-center subtitle">Esperando...</p>}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function ForfeitScreen() {
+      const g = useGame();
+      const [revealed, setRevealed] = useState(false);
+      const [card] = useState(() => pickRandom(FORFEITS[g.spiceLevel]));
+      const loserIsP1 = g.scores.p1 < g.scores.p2;
+      const loserName = loserIsP1 ? (g.isHost ? g.myName : g.partnerName) : (g.isHost ? g.partnerName : g.myName);
+
+      return (
+        <div className="gap-24 animate-in" style={{ flex: 1, justifyContent: "center" }}>
+          <div className="text-center">
+            <div style={{ fontSize: "3rem" }}>{"\u26A1"}</div>
+            <h1 style={{ color: "var(--accent)" }}>Penitencia</h1>
+            <p className="subtitle mt-8">{loserName} va perdiendo...</p>
+          </div>
+          {!revealed ? (
+            <button className="btn btn-primary animate-pulse" onClick={() => setRevealed(true)}>Revelar Penitencia {"\u{1F60F}"}</button>
+          ) : (
+            <div className="forfeit-card animate-flip">
+              <p style={{ fontSize: "0.8rem", color: "var(--accent-soft)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "2px" }}>{loserName} debe:</p>
+              <p style={{ fontSize: "1.2rem", lineHeight: "1.6" }}>{card}</p>
+            </div>
+          )}
+          {revealed && g.isHost && <button className="btn btn-secondary mt-16" onClick={g.advanceFromForfeit}>Continuar Jugando {"\u2192"}</button>}
+          {revealed && !g.isHost && <p className="text-center subtitle">Esperando...</p>}
+        </div>
+      );
+    }
+
+    function ResultsScreen() {
+      const g = useGame();
+      const p1 = g.isHost ? g.myName : g.partnerName;
+      const p2 = g.isHost ? g.partnerName : g.myName;
+      const winner = g.scores.p1 > g.scores.p2 ? p1 : g.scores.p2 > g.scores.p1 ? p2 : null;
+
+      return (
+        <div className="gap-24 animate-in" style={{ flex: 1, justifyContent: "center" }}>
+          <div className="text-center">
+            <div style={{ fontSize: "4rem", marginBottom: "8px" }}>{winner ? "\u{1F3C6}" : "\u{1F495}"}</div>
+            <h1>{winner ? "\u00a1" + winner + " Gana!" : "\u00a1Empate!"}</h1>
+            <p className="subtitle mt-8">{winner ? "Pero ambos ganaron esta noche \u{1F495}" : "Los dos son ganadores \u{1F319}"}</p>
+          </div>
+          <div className="card">
+            <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
+              <div><p style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>{p1}</p><p style={{ fontSize: "2rem", fontWeight: "800", color: "var(--gold)" }}>{g.scores.p1}</p></div>
+              <div style={{ fontSize: "1.5rem", color: "var(--text-dim)", alignSelf: "center" }}>vs</div>
+              <div><p style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>{p2}</p><p style={{ fontSize: "2rem", fontWeight: "800", color: "var(--gold)" }}>{g.scores.p2}</p></div>
+            </div>
+          </div>
+          <button className="btn btn-primary" onClick={() => {
+            g.setPhase("lobby"); g.setRound(1); g.setScores({ p1: 0, p2: 0 }); g.setGameIndex(0);
+            g.setMyWordsSubmitted(false); g.setPartnerWordsReady(false);
+            g.setUsedTruths([]); g.setUsedDares([]); g.setWordIndexCounter(0);
+          }}>{"\u{1F319}"} Otra Ronda</button>
+        </div>
+      );
+    }
+
+    function CelebrationOverlay() {
+      const g = useGame();
+      if (!g.celebration) return null;
+      return (
+        <div className="celebration" onClick={() => g.setCelebration(null)}>
+          <div className="celebration-content">
+            {g.celebration.type === "correct" ? (
+              <React.Fragment>
+                <div className="celebration-emoji">{"\u{1F389}"}</div>
+                <h1>{"\u00a1Correcto!"}</h1>
+                <p className="subtitle mt-8">{g.celebration.guesser} adivin\u00f3</p>
+              </React.Fragment>
+            ) : (
+              <React.Fragment>
+                <div className="celebration-emoji">{"\u23F0"}</div>
+                <h1>{"\u00a1Se acab\u00f3 el tiempo!"}</h1>
+              </React.Fragment>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     // ===== MAIN APP =====
     function App() {
       const [phase, setPhase] = useState("landing");
@@ -445,15 +1023,11 @@
       const [myWordsSubmitted, setMyWordsSubmitted] = useState(false);
       const [partnerWordsReady, setPartnerWordsReady] = useState(false);
       const [wordIndexCounter, setWordIndexCounter] = useState(0);
-
-      // Drawing
       const [currentWord, setCurrentWord] = useState(null);
       const [currentCategory, setCurrentCategory] = useState(null);
       const [timeLeft, setTimeLeft] = useState(90);
       const [guesses, setGuesses] = useState([]);
       const [drawingFinished, setDrawingFinished] = useState(false);
-
-      // ToD
       const [todChoice, setTodChoice] = useState(null);
       const [todCard, setTodCard] = useState(null);
       const [todRevealed, setTodRevealed] = useState(false);
@@ -463,7 +1037,10 @@
       const party = usePartySocket(roomId);
       const amITurnPlayer = (isHost && turnPlayer === 1) || (!isHost && turnPlayer === 2);
 
-      // ===== MESSAGE HANDLERS =====
+      // Use refs for values needed in advanceRound to avoid stale closures
+      const stateRef = useRef({});
+      stateRef.current = { round, turnPlayer, gameIndex, gameOrder, scores, isHost, phase };
+
       useEffect(() => {
         const cleanups = [
           party.on("roster", (d) => {
@@ -477,21 +1054,13 @@
           party.on("partner-words-ready", () => setPartnerWordsReady(true)),
           party.on("words-received", () => setMyWordsSubmitted(true)),
           party.on("start-game", (d) => {
-            setGameOrder(d.gameOrder);
-            setGameIndex(0);
-            setRound(1);
-            setTurnPlayer(1);
-            setScores({ p1: 0, p2: 0 });
-            setPhase(d.gameOrder[0]);
+            setGameOrder(d.gameOrder); setGameIndex(0); setRound(1); setTurnPlayer(1);
+            setScores({ p1: 0, p2: 0 }); setPhase(d.gameOrder[0]);
           }),
-          party.on("word-to-draw", (d) => {
-            setCurrentWord(d.word);
-            setCurrentCategory(d.category);
-          }),
+          party.on("word-to-draw", (d) => { setCurrentWord(d.word); setCurrentCategory(d.category); }),
           party.on("guess", (d) => setGuesses(prev => [...prev, d])),
           party.on("correct-guess", (d) => {
-            setDrawingFinished(true);
-            setScores(d.scores);
+            setDrawingFinished(true); setScores(d.scores);
             setCelebration({ type: "correct", guesser: d.guesserName });
             setTimeout(() => setCelebration(null), 2500);
           }),
@@ -502,829 +1071,67 @@
             setTimeout(() => setCelebration(null), 2500);
           }),
           party.on("next-round", (d) => {
-            setRound(d.round);
-            setTurnPlayer(d.turnPlayer);
+            setRound(d.round); setTurnPlayer(d.turnPlayer);
             setGameIndex(d.gameIndex !== undefined ? d.gameIndex : 0);
             setPhase(d.game === "forfeit" ? "forfeit" : d.game);
-            setDrawingFinished(false);
-            setGuesses([]);
-            setCurrentWord(null);
-            setCurrentCategory(null);
-            setTimeLeft(90);
-            setTodChoice(null);
-            setTodCard(null);
-            setTodRevealed(false);
+            setDrawingFinished(false); setGuesses([]); setCurrentWord(null); setCurrentCategory(null);
+            setTimeLeft(90); setTodChoice(null); setTodCard(null); setTodRevealed(false);
           }),
           party.on("tod-choice", (d) => setTodChoice(d.choice)),
           party.on("tod-card", (d) => { setTodCard(d.card); setTodRevealed(true); }),
           party.on("tod-done", (d) => setScores(d.scores)),
-          party.on("forfeit-reveal", (d) => {
-            // partner revealed forfeit
-          }),
           party.on("game-over", (d) => { setScores(d.scores); setPhase("results"); }),
         ];
         return () => cleanups.forEach(fn => fn && fn());
       }, [party.on]);
 
-      // ===== ADVANCE ROUND LOGIC =====
-      function advanceRound() {
-        if (!isHost) return;
-        const newTurn = turnPlayer === 1 ? 2 : 1;
-        const newRound = round + 1;
-        const nextIdx = gameIndex + 1;
-
-        // Forfeit every 3 rounds
-        if (round % 3 === 0 && scores.p1 !== scores.p2) {
-          party.send({ type: "next-round", round: newRound, turnPlayer: newTurn, game: "forfeit", gameIndex });
-          setRound(newRound);
-          setTurnPlayer(newTurn);
-          setPhase("forfeit");
-          return;
+      const advanceRound = useCallback(() => {
+        const s = stateRef.current;
+        if (!s.isHost) return;
+        const newTurn = s.turnPlayer === 1 ? 2 : 1;
+        const newRound = s.round + 1;
+        const nextIdx = s.gameIndex + 1;
+        if (s.round % 3 === 0 && s.scores.p1 !== s.scores.p2) {
+          party.send({ type: "next-round", round: newRound, turnPlayer: newTurn, game: "forfeit", gameIndex: s.gameIndex });
+          setRound(newRound); setTurnPlayer(newTurn); setPhase("forfeit"); return;
         }
-
-        if (nextIdx >= gameOrder.length) {
-          party.send({ type: "game-over", scores });
-          setPhase("results");
-          return;
-        }
-
-        const nextGame = gameOrder[nextIdx];
+        if (nextIdx >= s.gameOrder.length) { party.send({ type: "game-over", scores: s.scores }); setPhase("results"); return; }
+        const nextGame = s.gameOrder[nextIdx];
         party.send({ type: "next-round", round: newRound, turnPlayer: newTurn, game: nextGame, gameIndex: nextIdx });
-        setGameIndex(nextIdx);
-        setRound(newRound);
-        setTurnPlayer(newTurn);
-        setPhase(nextGame);
-      }
-
-      function advanceFromForfeit() {
-        if (!isHost) return;
-        const nextIdx = gameIndex + 1;
-        const newTurn = turnPlayer;
-
-        if (nextIdx >= gameOrder.length) {
-          party.send({ type: "game-over", scores });
-          setPhase("results");
-          return;
-        }
-
-        const nextGame = gameOrder[nextIdx];
-        party.send({ type: "next-round", round, turnPlayer: newTurn, game: nextGame, gameIndex: nextIdx });
-        setGameIndex(nextIdx);
-        setPhase(nextGame);
-      }
-
-      // ===== LANDING =====
-      function LandingScreen() {
-        return (
-          <div className="gap-24 animate-in" style={{ justifyContent: "center", flex: 1 }}>
-            <div className="text-center">
-              <div className="animate-float" style={{ fontSize: "3.5rem", marginBottom: "12px" }}>{"\u{1F319}"}</div>
-              <h1>Noche de Juegos</h1>
-              <h1 style={{ color: "var(--accent)" }}>en Pareja</h1>
-              <p className="subtitle mt-8">Dibuja, reta, y divi\u00e9rtanse juntos</p>
-            </div>
-            <div className="gap-12">
-              <button className="btn btn-primary" onClick={() => { setIsHost(true); setPhase("create"); }}>
-                Crear Sala
-              </button>
-              <button className="btn btn-secondary" onClick={() => setPhase("join")}>
-                Unirse a Sala
-              </button>
-            </div>
-          </div>
-        );
-      }
-
-      // ===== CREATE =====
-      function CreateScreen() {
-        const [name, setName] = useState("");
-        function handleCreate() {
-          if (!name.trim()) return;
-          setMyName(name.trim());
-          setRoomId(generateRoomCode());
-          setPhase("lobby");
-        }
-        return (
-          <div className="gap-24 animate-in" style={{ flex: 1 }}>
-            <button className="back-btn" onClick={() => setPhase("landing")}>{"\u2190"} Volver</button>
-            <div>
-              <h2>Crear Sala</h2>
-              <p className="subtitle">Ingresa tu nombre para empezar</p>
-            </div>
-            <div className="gap-12">
-              <input className="input" placeholder="Tu nombre" value={name}
-                onChange={e => setName(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleCreate()} autoFocus />
-              <button className={"btn btn-primary " + (!name.trim() ? "btn-disabled" : "")} onClick={handleCreate}>
-                Crear Sala
-              </button>
-            </div>
-          </div>
-        );
-      }
-
-      // ===== JOIN =====
-      function JoinScreen() {
-        const [name, setName] = useState("");
-        const [code, setCode] = useState("");
-        function handleJoin() {
-          if (!name.trim() || code.length < 6) return;
-          setMyName(name.trim());
-          setRoomId(code.toUpperCase());
-          setPhase("lobby");
-        }
-        return (
-          <div className="gap-24 animate-in" style={{ flex: 1 }}>
-            <button className="back-btn" onClick={() => setPhase("landing")}>{"\u2190"} Volver</button>
-            <div>
-              <h2>Unirse a Sala</h2>
-              <p className="subtitle">Ingresa el c\u00f3digo que te compartieron</p>
-            </div>
-            <div className="gap-12">
-              <input className="input" placeholder="Tu nombre" value={name}
-                onChange={e => setName(e.target.value)} autoFocus />
-              <input className="input" placeholder="C\u00f3digo de sala" value={code}
-                onChange={e => setCode(e.target.value.toUpperCase())}
-                onKeyDown={e => e.key === "Enter" && handleJoin()}
-                maxLength={6} style={{ textAlign: "center", letterSpacing: "8px", fontSize: "1.3rem" }} />
-              <button className={"btn btn-primary " + (!name.trim() || code.length < 6 ? "btn-disabled" : "")} onClick={handleJoin}>
-                Unirse
-              </button>
-            </div>
-          </div>
-        );
-      }
-
-      // ===== LOBBY =====
-      function LobbyScreen() {
-        const announced = useRef(false);
-        const [localSpice, setLocalSpice] = useState(spiceLevel);
-        const [localStrip, setLocalStrip] = useState(stripMode);
-
-        // Both players announce themselves when connected
-        useEffect(() => {
-          if (!party.connected || announced.current) return;
-          announced.current = true;
-          party.send({ type: "announce", name: myName, playerId, isHost });
-        }, [party.connected]);
-
-        function updateSettings(spice, strip) {
-          setLocalSpice(spice);
-          setLocalStrip(strip);
-          setSpiceLevel(spice);
-          setStripMode(strip);
-          party.send({ type: "settings-update", spiceLevel: spice, stripMode: strip });
-        }
-
-        const bothConnected = party.playerCount >= 2;
-
-        return (
-          <div className="gap-16 animate-in" style={{ flex: 1 }}>
-            <div className="text-center">
-              <h2>{isHost ? "Sala Creada" : "Conectado"}</h2>
-              {isHost && <div className="room-code animate-glow">{roomId}</div>}
-              {isHost && <p className="subtitle">Comparte este c\u00f3digo con tu pareja</p>}
-            </div>
-
-            <div className="card gap-12">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>{"\u{1F464}"} {myName}</span>
-                <span style={{ color: "var(--success)", fontSize: "0.8rem" }}>Conectado/a</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>{"\u{1F495}"} {partnerName || "Esperando..."}</span>
-                {partnerName ? (
-                  <span style={{ color: "var(--success)", fontSize: "0.8rem" }}>Conectado/a</span>
-                ) : (
-                  <span className="waiting-dots" style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>
-                    <span>.</span><span>.</span><span>.</span>
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {isHost && (
-              <div className="card gap-12">
-                <h2 style={{ textAlign: "left", fontSize: "1rem" }}>Nivel de Picante</h2>
-                <div className="spice-options">
-                  {[
-                    { id: "mild", label: "\u{1F60A} Suave" },
-                    { id: "medium", label: "\u{1F336}\u{FE0F} Medio" },
-                    { id: "spicy", label: "\u{1F525} Picante" },
-                  ].map(s => (
-                    <button key={s.id} className={"spice-btn " + (localSpice === s.id ? "active" : "")}
-                      onClick={() => updateSettings(s.id, localStrip)}>
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="toggle-row">
-                  <span>{"\u{1F60F}"} Modo Strip Forfeit</span>
-                  <button className={"toggle " + (localStrip ? "active" : "")}
-                    onClick={() => updateSettings(localSpice, !localStrip)} />
-                </div>
-              </div>
-            )}
-
-            {!isHost && (
-              <div className="card gap-8">
-                <p style={{ fontSize: "0.9rem", color: "var(--text-dim)" }}>
-                  Nivel: {spiceLevel === "mild" ? "\u{1F60A} Suave" : spiceLevel === "medium" ? "\u{1F336}\u{FE0F} Medio" : "\u{1F525} Picante"}
-                </p>
-                {stripMode && <p style={{ fontSize: "0.9rem", color: "var(--accent-soft)" }}>{"\u{1F60F}"} Modo Strip activado</p>}
-              </div>
-            )}
-
-            <button className={"btn btn-primary " + (!bothConnected ? "btn-disabled" : "")}
-              onClick={() => setPhase("words")}>
-              {bothConnected ? "Agregar Palabras Secretas \u2192" : "Esperando a tu pareja..."}
-            </button>
-          </div>
-        );
-      }
-
-      // ===== CUSTOM WORDS =====
-      function WordsScreen() {
-        const [activeCategory, setActiveCategory] = useState(CATEGORIES[0].id);
-        const [wordInput, setWordInput] = useState("");
-        const [localWords, setLocalWords] = useState([]);
-
-        function addWord() {
-          if (!wordInput.trim() || localWords.length >= 10) return;
-          setLocalWords(prev => [...prev, { word: wordInput.trim(), category: activeCategory }]);
-          setWordInput("");
-        }
-
-        function removeWord(index) {
-          setLocalWords(prev => prev.filter((_, i) => i !== index));
-        }
-
-        function submitWords() {
-          party.send({ type: "submit-words", playerId, words: localWords.length > 0 ? localWords : DEFAULT_WORDS });
-        }
-
-        function startGame() {
-          const order = [];
-          for (let i = 0; i < 12; i++) {
-            order.push(i % 2 === 0 ? "drawing" : "truthordare");
-          }
-          party.send({ type: "start-game", gameOrder: order });
-          setGameOrder(order);
-          setGameIndex(0);
-          setRound(1);
-          setTurnPlayer(1);
-          setScores({ p1: 0, p2: 0 });
-          setPhase(order[0]);
-        }
-
-        const placeholders = {
-          apodos: "Ej: Osito, Mi vida...",
-          bromas: "Ej: Lo del supermercado...",
-          lugares: "Ej: Aquel caf\u00e9...",
-          memorias: "Ej: Nuestra primera cita...",
-          secretos: "Ej: Aquello que pas\u00f3...",
-        };
-
-        return (
-          <div className="gap-16 animate-in" style={{ flex: 1 }}>
-            <div>
-              <h2>Tus Palabras Secretas</h2>
-              <p className="subtitle">Tu pareja las dibujar\u00e1 sin saber qu\u00e9 son {"\u{1F60F}"}</p>
-              <p className="text-center" style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
-                {localWords.length}/10 palabras
-              </p>
-            </div>
-
-            <div className="category-tabs">
-              {CATEGORIES.map(c => {
-                const count = localWords.filter(w => w.category === c.id).length;
-                return (
-                  <button key={c.id} className={"category-tab " + (activeCategory === c.id ? "active" : "")}
-                    onClick={() => setActiveCategory(c.id)}>
-                    {c.icon} {c.label} {count > 0 && "(" + count + ")"}
-                  </button>
-                );
-              })}
-            </div>
-
-            {localWords.length < 10 && (
-              <div className="guess-bar">
-                <input className="input" placeholder={placeholders[activeCategory]}
-                  value={wordInput} onChange={e => setWordInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && addWord()} />
-                <button className="btn btn-primary" style={{ width: "auto" }} onClick={addWord}>+</button>
-              </div>
-            )}
-
-            <div className="word-chips">
-              {localWords.map((w, i) => {
-                const cat = CATEGORIES.find(c => c.id === w.category);
-                return (
-                  <span key={i} className="word-chip">
-                    {cat ? cat.icon : ""} {w.word}
-                    <button onClick={() => removeWord(i)}>{"\u00d7"}</button>
-                  </span>
-                );
-              })}
-            </div>
-
-            {!myWordsSubmitted ? (
-              <button className="btn btn-primary" onClick={submitWords}>
-                {localWords.length > 0
-                  ? "Enviar Mis Palabras (" + localWords.length + ")"
-                  : "Usar Palabras Por Defecto"}
-              </button>
-            ) : (
-              <div className="card text-center gap-8">
-                <p style={{ color: "var(--success)" }}>{"\u2713"} Tus palabras est\u00e1n listas</p>
-                <p style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
-                  {partnerWordsReady ? "\u2713 Tu pareja tambi\u00e9n est\u00e1 lista" : "Esperando a que tu pareja termine..."}
-                </p>
-              </div>
-            )}
-
-            {isHost && myWordsSubmitted && partnerWordsReady && (
-              <button className="btn btn-primary animate-pulse mt-8" onClick={startGame}>
-                {"\u{1F319}"} Empezar la Noche
-              </button>
-            )}
-          </div>
-        );
-      }
-
-      // ===== DRAWING CANVAS =====
-      function DrawingCanvas({ isDrawer, partyRef }) {
-        const canvasRef = useRef(null);
-        const [isDrawing, setIsDrawing] = useState(false);
-        const [color, setColor] = useState("#000000");
-        const [brushSize, setBrushSize] = useState(6);
-        const lastPoint = useRef(null);
-        const canvasW = useRef(0);
-        const canvasH = useRef(0);
-
-        useEffect(() => {
-          const canvas = canvasRef.current;
-          if (!canvas) return;
-          const w = canvas.offsetWidth;
-          const h = Math.round(w * 1.1);
-          canvas.width = w * 2;
-          canvas.height = h * 2;
-          canvas.style.height = h + "px";
-          canvasW.current = w;
-          canvasH.current = h;
-          const ctx = canvas.getContext("2d");
-          ctx.scale(2, 2);
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, w, h);
-          ctx.lineCap = "round";
-          ctx.lineJoin = "round";
-        }, []);
-
-        useEffect(() => {
-          if (isDrawer) return;
-          const c1 = partyRef.on("draw-stroke", (d) => {
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-            const ctx = canvas.getContext("2d");
-            ctx.strokeStyle = d.color;
-            ctx.lineWidth = d.size;
-            ctx.beginPath();
-            ctx.moveTo(d.x1, d.y1);
-            ctx.lineTo(d.x2, d.y2);
-            ctx.stroke();
-          });
-          const c2 = partyRef.on("draw-clear", () => {
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-            const ctx = canvas.getContext("2d");
-            ctx.fillStyle = "#ffffff";
-            ctx.fillRect(0, 0, canvasW.current, canvasH.current);
-          });
-          return () => { c1(); c2(); };
-        }, [isDrawer]);
-
-        function getPos(e) {
-          const canvas = canvasRef.current;
-          const rect = canvas.getBoundingClientRect();
-          const t = e.touches ? e.touches[0] : e;
-          return { x: t.clientX - rect.left, y: t.clientY - rect.top };
-        }
-
-        function startDraw(e) {
-          if (!isDrawer) return;
-          e.preventDefault();
-          setIsDrawing(true);
-          lastPoint.current = getPos(e);
-        }
-        function draw(e) {
-          if (!isDrawing || !isDrawer) return;
-          e.preventDefault();
-          const pos = getPos(e);
-          const canvas = canvasRef.current;
-          const ctx = canvas.getContext("2d");
-          ctx.strokeStyle = color;
-          ctx.lineWidth = brushSize;
-          ctx.beginPath();
-          ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
-          ctx.lineTo(pos.x, pos.y);
-          ctx.stroke();
-          partyRef.send({
-            type: "draw-stroke",
-            x1: lastPoint.current.x, y1: lastPoint.current.y,
-            x2: pos.x, y2: pos.y,
-            color, size: brushSize,
-          });
-          lastPoint.current = pos;
-        }
-        function endDraw() {
-          setIsDrawing(false);
-          lastPoint.current = null;
-        }
-        function clearCanvas() {
-          const canvas = canvasRef.current;
-          const ctx = canvas.getContext("2d");
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, canvasW.current, canvasH.current);
-          partyRef.send({ type: "draw-clear" });
-        }
-
-        return (
-          <div>
-            <div className="canvas-container">
-              <canvas ref={canvasRef}
-                style={{ width: "100%", cursor: isDrawer ? "crosshair" : "default" }}
-                onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
-                onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw} />
-            </div>
-            {isDrawer && (
-              <React.Fragment>
-                <div className="color-picker mt-8">
-                  {DRAW_COLORS.map(c => (
-                    <div key={c} className={"color-dot " + (color === c ? "active" : "")}
-                      style={{ background: c, border: c === "#ffffff" ? "2px solid #ccc" : undefined }}
-                      onClick={() => setColor(c)} />
-                  ))}
-                </div>
-                <div className="brush-sizes mt-8">
-                  {BRUSH_SIZES.map(s => (
-                    <div key={s} className={"brush-size " + (brushSize === s ? "active" : "")}
-                      style={{ width: s + 10, height: s + 10 }}
-                      onClick={() => setBrushSize(s)} />
-                  ))}
-                  <button className="btn btn-secondary" style={{ width: "auto", padding: "8px 16px", fontSize: "0.8rem", marginLeft: "8px" }}
-                    onClick={clearCanvas}>Borrar</button>
-                </div>
-              </React.Fragment>
-            )}
-          </div>
-        );
-      }
-
-      // ===== DRAWING SCREEN =====
-      function DrawingScreen() {
-        const [guessInput, setGuessInput] = useState("");
-        const timerRef = useRef(null);
-        const requestedWord = useRef(false);
-        const isDrawer = amITurnPlayer;
-
-        useEffect(() => {
-          if (isDrawer && !requestedWord.current) {
-            requestedWord.current = true;
-            party.send({ type: "request-word", requesterId: playerId, wordIndex: wordIndexCounter });
-            setWordIndexCounter(prev => prev + 1);
-          }
-          setTimeLeft(90);
-          setDrawingFinished(false);
-          setGuesses([]);
-          return () => { requestedWord.current = false; };
-        }, [round, turnPlayer]);
-
-        useEffect(() => {
-          if (drawingFinished) { clearInterval(timerRef.current); return; }
-          timerRef.current = setInterval(() => {
-            setTimeLeft(prev => {
-              if (prev <= 1) {
-                clearInterval(timerRef.current);
-                if (isHost) {
-                  party.send({ type: "time-up", word: currentWord });
-                  setDrawingFinished(true);
-                  setCelebration({ type: "timeup" });
-                  setTimeout(() => setCelebration(null), 2500);
-                }
-                return 0;
-              }
-              return prev - 1;
-            });
-          }, 1000);
-          return () => clearInterval(timerRef.current);
-        }, [drawingFinished, round, turnPlayer]);
-
-        function submitGuess() {
-          if (!guessInput.trim() || isDrawer || drawingFinished) return;
-          const guess = guessInput.trim();
-          setGuessInput("");
-          party.send({ type: "guess", text: guess, name: myName });
-          setGuesses(prev => [...prev, { text: guess, name: myName }]);
-        }
-
-        // Check correct guess (also listen for own guesses matching)
-        useEffect(() => {
-          if (!currentWord || isDrawer || drawingFinished) return;
-          const lastGuess = guesses[guesses.length - 1];
-          if (!lastGuess || lastGuess.name !== myName) return;
-          if (lastGuess.text.toLowerCase() === currentWord.toLowerCase()) {
-            const newScores = { ...scores };
-            // guesser gets 10, drawer gets 5
-            if (isHost) {
-              // I'm guesser (not host turn), so host is p1
-              newScores.p2 += 10;
-              newScores.p1 += 5;
-            } else {
-              newScores.p1 += 10;
-              newScores.p2 += 5;
-            }
-            setScores(newScores);
-            party.send({ type: "correct-guess", scores: newScores, guesserName: myName });
-            setDrawingFinished(true);
-            setCelebration({ type: "correct", guesser: myName });
-            clearInterval(timerRef.current);
-            setTimeout(() => setCelebration(null), 2500);
-          }
-        }, [guesses]);
-
-        const timerClass = timeLeft <= 10 ? "timer critical" : timeLeft <= 30 ? "timer warning" : "timer";
-        const p1Name = isHost ? myName : partnerName;
-        const p2Name = isHost ? partnerName : myName;
-
-        return (
-          <div className="gap-12 animate-in" style={{ flex: 1 }}>
-            <div className="score-bar">
-              <span>{p1Name}: <span className="score">{scores.p1}</span></span>
-              <span className={timerClass}>{timeLeft}s</span>
-              <span>{p2Name}: <span className="score">{scores.p2}</span></span>
-            </div>
-
-            {isDrawer && currentWord && (
-              <div className="card text-center" style={{ background: "rgba(233, 69, 96, 0.1)", border: "1px solid var(--accent)" }}>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-dim)", marginBottom: "4px" }}>
-                  {currentCategory && currentCategory !== "default" && CATEGORIES.find(c => c.id === currentCategory)
-                    ? CATEGORIES.find(c => c.id === currentCategory).icon + " " : ""}
-                  Dibuja:
-                </p>
-                <p style={{ fontSize: "1.4rem", fontWeight: "700" }}>{currentWord}</p>
-              </div>
-            )}
-
-            {!isDrawer && (
-              <div className="card text-center">
-                <p style={{ fontSize: "0.9rem", color: "var(--text-dim)" }}>
-                  {currentCategory && currentCategory !== "default" && CATEGORIES.find(c => c.id === currentCategory)
-                    ? CATEGORIES.find(c => c.id === currentCategory).icon + " " + CATEGORIES.find(c => c.id === currentCategory).label
-                    : "\u{1F3A8} Adivina el dibujo"}
-                </p>
-              </div>
-            )}
-
-            <DrawingCanvas isDrawer={isDrawer} partyRef={party} />
-
-            {!isDrawer && !drawingFinished && (
-              <div className="guess-bar">
-                <input className="input" placeholder="Tu respuesta..."
-                  value={guessInput} onChange={e => setGuessInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && submitGuess()} autoFocus />
-                <button className="btn btn-primary" style={{ width: "auto" }} onClick={submitGuess}>{"\u2192"}</button>
-              </div>
-            )}
-
-            {guesses.length > 0 && (
-              <div className="card" style={{ maxHeight: "100px", overflowY: "auto" }}>
-                {guesses.map((g, i) => (
-                  <p key={i} style={{ fontSize: "0.85rem", padding: "2px 0", color: "var(--text-dim)" }}>
-                    <strong style={{ color: "var(--text)" }}>{g.name}:</strong> {g.text}
-                  </p>
-                ))}
-              </div>
-            )}
-
-            {drawingFinished && (
-              <div className="gap-8 mt-8">
-                {currentWord && (
-                  <p className="text-center" style={{ color: "var(--accent-soft)" }}>
-                    La palabra era: <strong>{currentWord}</strong>
-                  </p>
-                )}
-                {isHost && (
-                  <button className="btn btn-primary" onClick={advanceRound}>Siguiente Ronda {"\u2192"}</button>
-                )}
-                {!isHost && <p className="text-center subtitle">Esperando...</p>}
-              </div>
-            )}
-          </div>
-        );
-      }
-
-      // ===== TRUTH OR DARE =====
-      function TruthOrDareScreen() {
-        const isMyTurn = amITurnPlayer;
-        const turnName = turnPlayer === 1
-          ? (isHost ? myName : partnerName)
-          : (isHost ? partnerName : myName);
-
-        function chooseTod(choice) {
-          setTodChoice(choice);
-          party.send({ type: "tod-choice", choice });
-
-          const deck = choice === "truth" ? TRUTHS[spiceLevel] : DARES[spiceLevel];
-          const used = choice === "truth" ? usedTruths : usedDares;
-          const available = deck.filter(c => !used.includes(c));
-          const card = available.length > 0 ? pickRandom(available) : pickRandom(deck);
-
-          if (choice === "truth") setUsedTruths(prev => [...prev, card]);
-          else setUsedDares(prev => [...prev, card]);
-
-          setTodCard(card);
-          setTodRevealed(true);
-          party.send({ type: "tod-card", card });
-        }
-
-        function handleDone() {
-          const newScores = { ...scores };
-          if (turnPlayer === 1) newScores.p1 += 5;
-          else newScores.p2 += 5;
-          setScores(newScores);
-          party.send({ type: "tod-done", scores: newScores });
-          advanceRound();
-        }
-
-        const p1Name = isHost ? myName : partnerName;
-        const p2Name = isHost ? partnerName : myName;
-
-        return (
-          <div className="gap-16 animate-in" style={{ flex: 1 }}>
-            <div className="score-bar">
-              <span>{p1Name}: <span className="score">{scores.p1}</span></span>
-              <span style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>Ronda {round}</span>
-              <span>{p2Name}: <span className="score">{scores.p2}</span></span>
-            </div>
-
-            <h2>{turnName}</h2>
-
-            {!todChoice && (
-              <div>
-                <p className="text-center subtitle mb-16">
-                  {isMyTurn ? "\u00bfQu\u00e9 prefieres?" : "Esperando a que " + turnName + " elija..."}
-                </p>
-                {isMyTurn && (
-                  <div style={{ display: "flex", gap: "12px" }}>
-                    <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => chooseTod("truth")}>
-                      {"\u{1F914}"} Verdad
-                    </button>
-                    <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => chooseTod("dare")}>
-                      {"\u{1F608}"} Reto
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {todRevealed && todCard && (
-              <div className="tod-card animate-flip">
-                <p className="card-type">
-                  {todChoice === "truth" ? "\u{1F914} Verdad" : "\u{1F608} Reto"}
-                </p>
-                <p className="card-text">{todCard}</p>
-              </div>
-            )}
-
-            {todRevealed && (
-              <div className="mt-16">
-                {isHost ? (
-                  <button className="btn btn-primary" onClick={handleDone}>
-                    Hecho {"\u2713"} Siguiente
-                  </button>
-                ) : (
-                  <p className="text-center subtitle">Esperando...</p>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      }
-
-      // ===== FORFEIT =====
-      function ForfeitScreen() {
-        const [revealed, setRevealed] = useState(false);
-        const [card] = useState(() => pickRandom(FORFEITS[spiceLevel]));
-        const loserIsP1 = scores.p1 < scores.p2;
-        const loserName = loserIsP1 ? (isHost ? myName : partnerName) : (isHost ? partnerName : myName);
-
-        return (
-          <div className="gap-24 animate-in" style={{ flex: 1, justifyContent: "center" }}>
-            <div className="text-center">
-              <div style={{ fontSize: "3rem" }}>{"\u26A1"}</div>
-              <h1 style={{ color: "var(--accent)" }}>Penitencia</h1>
-              <p className="subtitle mt-8">{loserName} va perdiendo...</p>
-            </div>
-
-            {!revealed ? (
-              <button className="btn btn-primary animate-pulse" onClick={() => setRevealed(true)}>
-                Revelar Penitencia {"\u{1F60F}"}
-              </button>
-            ) : (
-              <div className="forfeit-card animate-flip">
-                <p style={{ fontSize: "0.8rem", color: "var(--accent-soft)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "2px" }}>
-                  {loserName} debe:
-                </p>
-                <p style={{ fontSize: "1.2rem", lineHeight: "1.6" }}>{card}</p>
-              </div>
-            )}
-
-            {revealed && isHost && (
-              <button className="btn btn-secondary mt-16" onClick={advanceFromForfeit}>
-                Continuar Jugando {"\u2192"}
-              </button>
-            )}
-            {revealed && !isHost && (
-              <p className="text-center subtitle">Esperando...</p>
-            )}
-          </div>
-        );
-      }
-
-      // ===== RESULTS =====
-      function ResultsScreen() {
-        const p1Name = isHost ? myName : partnerName;
-        const p2Name = isHost ? partnerName : myName;
-        const winner = scores.p1 > scores.p2 ? p1Name : scores.p2 > scores.p1 ? p2Name : null;
-
-        return (
-          <div className="gap-24 animate-in" style={{ flex: 1, justifyContent: "center" }}>
-            <div className="text-center">
-              <div style={{ fontSize: "4rem", marginBottom: "8px" }}>
-                {winner ? "\u{1F3C6}" : "\u{1F495}"}
-              </div>
-              <h1>{winner ? "\u00a1" + winner + " Gana!" : "\u00a1Empate!"}</h1>
-              <p className="subtitle mt-8">
-                {winner ? "Pero ambos ganaron esta noche \u{1F495}" : "Los dos son ganadores \u{1F319}"}
-              </p>
-            </div>
-
-            <div className="card">
-              <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
-                <div>
-                  <p style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>{p1Name}</p>
-                  <p style={{ fontSize: "2rem", fontWeight: "800", color: "var(--gold)" }}>{scores.p1}</p>
-                </div>
-                <div style={{ fontSize: "1.5rem", color: "var(--text-dim)", alignSelf: "center" }}>vs</div>
-                <div>
-                  <p style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>{p2Name}</p>
-                  <p style={{ fontSize: "2rem", fontWeight: "800", color: "var(--gold)" }}>{scores.p2}</p>
-                </div>
-              </div>
-            </div>
-
-            <button className="btn btn-primary" onClick={() => {
-              setPhase("lobby");
-              setRound(1);
-              setScores({ p1: 0, p2: 0 });
-              setGameIndex(0);
-              setMyWordsSubmitted(false);
-              setPartnerWordsReady(false);
-              setUsedTruths([]);
-              setUsedDares([]);
-              setWordIndexCounter(0);
-            }}>
-              {"\u{1F319}"} Otra Ronda
-            </button>
-          </div>
-        );
-      }
-
-      // ===== CELEBRATION OVERLAY =====
-      function CelebrationOverlay() {
-        if (!celebration) return null;
-        return (
-          <div className="celebration" onClick={() => setCelebration(null)}>
-            <div className="celebration-content">
-              {celebration.type === "correct" ? (
-                <React.Fragment>
-                  <div className="celebration-emoji">{"\u{1F389}"}</div>
-                  <h1>{"\u00a1Correcto!"}</h1>
-                  <p className="subtitle mt-8">{celebration.guesser} adivin\u00f3</p>
-                </React.Fragment>
-              ) : (
-                <React.Fragment>
-                  <div className="celebration-emoji">{"\u23F0"}</div>
-                  <h1>{"\u00a1Se acab\u00f3 el tiempo!"}</h1>
-                </React.Fragment>
-              )}
-            </div>
-          </div>
-        );
-      }
+        setGameIndex(nextIdx); setRound(newRound); setTurnPlayer(newTurn); setPhase(nextGame);
+      }, [party.send]);
+
+      const advanceFromForfeit = useCallback(() => {
+        const s = stateRef.current;
+        if (!s.isHost) return;
+        const nextIdx = s.gameIndex + 1;
+        if (nextIdx >= s.gameOrder.length) { party.send({ type: "game-over", scores: s.scores }); setPhase("results"); return; }
+        const nextGame = s.gameOrder[nextIdx];
+        party.send({ type: "next-round", round: s.round, turnPlayer: s.turnPlayer, game: nextGame, gameIndex: nextIdx });
+        setGameIndex(nextIdx); setPhase(nextGame);
+      }, [party.send]);
+
+      const ctx = useMemo(() => ({
+        phase, setPhase, playerId, roomId, setRoomId, isHost, setIsHost,
+        myName, setMyName, partnerName, spiceLevel, setSpiceLevel,
+        stripMode, setStripMode, scores, setScores, round, setRound,
+        turnPlayer, setTurnPlayer, gameOrder, setGameOrder, gameIndex, setGameIndex,
+        celebration, setCelebration, myWordsSubmitted, setMyWordsSubmitted,
+        partnerWordsReady, setPartnerWordsReady, wordIndexCounter, setWordIndexCounter,
+        currentWord, setCurrentWord, currentCategory, setCurrentCategory,
+        timeLeft, setTimeLeft, guesses, setGuesses, drawingFinished, setDrawingFinished,
+        todChoice, setTodChoice, todCard, setTodCard, todRevealed, setTodRevealed,
+        usedTruths, setUsedTruths, usedDares, setUsedDares,
+        party, amITurnPlayer, advanceRound, advanceFromForfeit,
+      }), [phase, playerId, roomId, isHost, myName, partnerName, spiceLevel, stripMode,
+        scores, round, turnPlayer, gameOrder, gameIndex, celebration,
+        myWordsSubmitted, partnerWordsReady, wordIndexCounter,
+        currentWord, currentCategory, timeLeft, guesses, drawingFinished,
+        todChoice, todCard, todRevealed, usedTruths, usedDares,
+        party, amITurnPlayer, advanceRound, advanceFromForfeit]);
 
       return (
-        <React.Fragment>
+        <GameCtx.Provider value={ctx}>
           {phase === "landing" && <LandingScreen />}
           {phase === "create" && <CreateScreen />}
           {phase === "join" && <JoinScreen />}
@@ -1335,7 +1142,7 @@
           {phase === "forfeit" && <ForfeitScreen />}
           {phase === "results" && <ResultsScreen />}
           <CelebrationOverlay />
-        </React.Fragment>
+        </GameCtx.Provider>
       );
     }
 
