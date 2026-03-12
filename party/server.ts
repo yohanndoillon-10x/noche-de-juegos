@@ -8,6 +8,7 @@ export default class GameServer implements Server {
 
   wordLists: Record<string, WordEntry[]> = {};
   players: PlayerInfo[] = [];
+  currentWord: string | null = null;
 
   constructor(public room: Party) {}
 
@@ -77,7 +78,31 @@ export default class GameServer implements Server {
         opponentWords.length > 0
           ? opponentWords[wordIndex]
           : { word: "corazón", category: "default" };
+      this.currentWord = word.word;
       sender.send(JSON.stringify({ type: "word-to-draw", ...word }));
+      return;
+    }
+
+    // Guess — server checks if correct since only drawer has the word
+    if (data.type === "guess") {
+      // Relay the guess to everyone else
+      this.room.broadcast(message, [sender.id]);
+      // Check correctness server-side
+      if (this.currentWord && data.text.toLowerCase().trim() === this.currentWord.toLowerCase().trim()) {
+        this.room.broadcast(JSON.stringify({
+          type: "correct-guess",
+          guesserName: data.name,
+          word: this.currentWord,
+        }));
+        this.currentWord = null;
+      }
+      return;
+    }
+
+    // Skip word — drawer wants next word
+    if (data.type === "skip-word") {
+      this.currentWord = null;
+      this.room.broadcast(message, [sender.id]);
       return;
     }
 

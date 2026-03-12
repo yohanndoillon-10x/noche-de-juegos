@@ -502,14 +502,19 @@ function DrawingScreen() {
     const guess = guessInput.trim(); setGuessInput("");
     g.party.send({ type: "guess", text: guess, name: g.myName });
     g.setGuesses(prev => [...prev, { text: guess, name: g.myName }]);
-    if (g.currentWord && guess.toLowerCase() === g.currentWord.toLowerCase()) {
-      const ns = { ...g.scores };
-      if (g.isHost) { ns.p2 += 10; ns.p1 += 5; } else { ns.p1 += 10; ns.p2 += 5; }
-      g.setScores(ns);
-      g.party.send({ type: "correct-guess", scores: ns, guesserName: g.myName });
-      g.setDrawingFinished(true); g.setCelebration({ type: "correct", guesser: g.myName });
-      clearInterval(timerRef.current); setTimeout(() => g.setCelebration(null), 2500);
-    }
+  }
+
+  function skipWord() {
+    g.party.send({ type: "skip-word" });
+    requestedWord.current = false;
+    g.setWordIndexCounter(prev => {
+      const next = prev + 1;
+      g.party.send({ type: "request-word", requesterId: g.playerId, wordIndex: next });
+      requestedWord.current = true;
+      return next;
+    });
+    // Clear canvas for both
+    g.party.send({ type: "draw-clear" });
   }
 
   const tc = g.timeLeft <= 10 ? "timer critical" : g.timeLeft <= 30 ? "timer warning" : "timer";
@@ -529,6 +534,10 @@ function DrawingScreen() {
             {g.currentCategory && g.currentCategory !== "default" && CATEGORIES.find(c => c.id === g.currentCategory) ? CATEGORIES.find(c => c.id === g.currentCategory).icon + " " : ""}Dibuja:
           </p>
           <p style={{ fontSize: "1.4rem", fontWeight: "700" }}>{g.currentWord}</p>
+          {!g.drawingFinished && (
+            <button className="btn btn-secondary mt-8" style={{ width: "auto", padding: "8px 16px", fontSize: "0.8rem" }}
+              onClick={skipWord}>Saltar →</button>
+          )}
         </div>
       )}
       {!isDrawer && (
@@ -749,11 +758,26 @@ function App() {
       party.on("start-game", (d) => { setGameOrder(d.gameOrder); setGameIndex(0); setRound(1); setTurnPlayer(1); setScores({ p1: 0, p2: 0 }); setPhase(d.gameOrder[0]); }),
       party.on("word-to-draw", (d) => { setCurrentWord(d.word); setCurrentCategory(d.category); }),
       party.on("guess", (d) => setGuesses(prev => [...prev, d])),
-      party.on("correct-guess", (d) => { setDrawingFinished(true); setScores(d.scores); setCelebration({ type: "correct", guesser: d.guesserName }); setTimeout(() => setCelebration(null), 2500); }),
+      party.on("correct-guess", (d) => {
+        setDrawingFinished(true);
+        setCurrentWord(d.word);
+        setScores(prev => {
+          const ns = { ...prev };
+          // Guesser gets 10, drawer gets 5. Guesser is always the non-turn player.
+          // turnPlayer=1 means host draws, so p2 (guest) guesses
+          // We use stateRef to get current turnPlayer
+          const tp = stateRef.current.turnPlayer;
+          if (tp === 1) { ns.p2 += 10; ns.p1 += 5; } else { ns.p1 += 10; ns.p2 += 5; }
+          return ns;
+        });
+        setCelebration({ type: "correct", guesser: d.guesserName });
+        setTimeout(() => setCelebration(null), 2500);
+      }),
       party.on("time-up", (d) => { setDrawingFinished(true); if (d && d.word) setCurrentWord(d.word); setCelebration({ type: "timeup" }); setTimeout(() => setCelebration(null), 2500); }),
-      party.on("next-round", (d) => { setRound(d.round); setTurnPlayer(d.turnPlayer); setGameIndex(d.gameIndex !== undefined ? d.gameIndex : 0); setPhase(d.game === "forfeit" ? "forfeit" : d.game); setDrawingFinished(false); setGuesses([]); setCurrentWord(null); setCurrentCategory(null); setTimeLeft(90); setTodChoice(null); setTodCard(null); setTodRevealed(false); }),
+      party.on("next-round", (d) => { setRound(d.round); setTurnPlayer(d.turnPlayer); setGameIndex(d.gameIndex !== undefined ? d.gameIndex : 0); if (d.scores) setScores(d.scores); setPhase(d.game === "forfeit" ? "forfeit" : d.game); setDrawingFinished(false); setGuesses([]); setCurrentWord(null); setCurrentCategory(null); setTimeLeft(90); setTodChoice(null); setTodCard(null); setTodRevealed(false); }),
       party.on("tod-choice", (d) => setTodChoice(d.choice)),
       party.on("tod-card", (d) => { setTodCard(d.card); setTodRevealed(true); }),
+      party.on("skip-word", () => { setCurrentWord(null); setCurrentCategory(null); setGuesses([]); }),
       party.on("tod-done", (d) => setScores(d.scores)),
       party.on("game-over", (d) => { setScores(d.scores); setPhase("results"); }),
     ];
@@ -764,12 +788,12 @@ function App() {
     const s = stateRef.current; if (!s.isHost) return;
     const newTurn = s.turnPlayer === 1 ? 2 : 1, newRound = s.round + 1, nextIdx = s.gameIndex + 1;
     if (s.round % 3 === 0 && s.scores.p1 !== s.scores.p2) {
-      party.send({ type: "next-round", round: newRound, turnPlayer: newTurn, game: "forfeit", gameIndex: s.gameIndex });
+      party.send({ type: "next-round", round: newRound, turnPlayer: newTurn, game: "forfeit", gameIndex: s.gameIndex, scores: s.scores });
       setRound(newRound); setTurnPlayer(newTurn); setPhase("forfeit"); return;
     }
     if (nextIdx >= s.gameOrder.length) { party.send({ type: "game-over", scores: s.scores }); setPhase("results"); return; }
     const ng = s.gameOrder[nextIdx];
-    party.send({ type: "next-round", round: newRound, turnPlayer: newTurn, game: ng, gameIndex: nextIdx });
+    party.send({ type: "next-round", round: newRound, turnPlayer: newTurn, game: ng, gameIndex: nextIdx, scores: s.scores });
     setGameIndex(nextIdx); setRound(newRound); setTurnPlayer(newTurn); setPhase(ng);
   }, [party.send]);
 
