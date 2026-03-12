@@ -2,7 +2,6 @@
   "name": "noche-de-juegos",
   "main": "party/server.ts",
   "serve": {
-    "path": "dist",
-    "build": "vite build"
+    "path": "dist"
   }
 }
