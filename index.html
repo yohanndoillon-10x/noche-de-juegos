@@ -466,11 +466,9 @@
       // ===== MESSAGE HANDLERS =====
       useEffect(() => {
         const cleanups = [
-          party.on("player-joined", (d) => setPartnerName(d.name)),
-          party.on("host-info", (d) => {
-            setPartnerName(d.hostName);
-            setSpiceLevel(d.spiceLevel);
-            setStripMode(d.stripMode);
+          party.on("roster", (d) => {
+            const partner = d.players.find(p => p.playerId !== playerId);
+            if (partner) setPartnerName(partner.name);
           }),
           party.on("settings-update", (d) => {
             if (d.spiceLevel) setSpiceLevel(d.spiceLevel);
@@ -659,25 +657,16 @@
 
       // ===== LOBBY =====
       function LobbyScreen() {
-        const sentJoin = useRef(false);
+        const announced = useRef(false);
         const [localSpice, setLocalSpice] = useState(spiceLevel);
         const [localStrip, setLocalStrip] = useState(stripMode);
 
+        // Both players announce themselves when connected
         useEffect(() => {
-          if (!party.connected || sentJoin.current) return;
-          sentJoin.current = true;
-          if (!isHost) {
-            party.send({ type: "player-joined", name: myName, playerId });
-          }
+          if (!party.connected || announced.current) return;
+          announced.current = true;
+          party.send({ type: "announce", name: myName, playerId, isHost });
         }, [party.connected]);
-
-        useEffect(() => {
-          if (!isHost) return;
-          return party.on("player-joined", (d) => {
-            setPartnerName(d.name);
-            party.send({ type: "host-info", hostName: myName, spiceLevel: localSpice, stripMode: localStrip });
-          });
-        }, [party.on, isHost, localSpice, localStrip]);
 
         function updateSettings(spice, strip) {
           setLocalSpice(spice);
