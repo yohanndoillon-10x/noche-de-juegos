@@ -3,9 +3,16 @@
   "private": true,
   "scripts": {
     "dev": "npx partykit dev",
+    "build": "vite build",
     "deploy": "npx partykit deploy"
   },
   "dependencies": {
-    "partykit": "^0.0.115"
+    "partykit": "^0.0.115",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.0",
+    "vite": "^8.0.0"
   }
 }
