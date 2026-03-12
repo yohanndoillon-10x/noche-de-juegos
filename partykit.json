@@ -1,0 +1,7 @@
+{
+  "name": "noche-de-juegos",
+  "main": "party/server.ts",
+  "serve": {
+    "path": "."
+  }
+}
